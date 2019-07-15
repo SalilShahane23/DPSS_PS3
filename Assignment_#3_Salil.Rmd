@@ -1,0 +1,222 @@
+---
+title: "Problem_Set_3"
+author: "Salil Shahane"
+date: "13/07/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r tex, eval=FALSE, include=FALSE}
+install.packages('tinytex')
+tinytex::install_tinytex()
+```
+
+
+# Section 1
+
+```{r libraries1, warning=FALSE, message=FALSE,echo=FALSE, include=TRUE}
+library(tidyverse)
+library(lubridate)
+library(jsonlite)
+```
+
+```{r Question_1, warning=FALSE}
+thefts_data <- tibble()
+for(i in 2016:2019){
+  theft_data_url <- 
+  paste("https://data.cityofchicago.org/resource/ijzp-q8t2.json?primary_type=THEFT&$limit=20000&year=",i, collapse=" ")
+  data <-read_json(theft_data_url,simplifyVector = TRUE)
+  data[22]<- NULL
+  thefts_data <- bind_rows(thefts_data,data) 
+}
+
+#1.2
+thefts_data<- thefts_data%>%
+  mutate(dates=ymd_hms(date))%>%
+  mutate(years=year(dates))%>%
+  mutate(day=day(dates))%>%
+  mutate(week=week(dates))%>%
+  mutate(hour=hour(dates))%>%
+  mutate(month=month(dates))
+
+
+#thefts_data$month <- NULL
+thefts_data<- thefts_data%>%
+  drop_na(latitude,longitude)
+
+#1.3
+
+thefts_data <- thefts_data%>%
+  mutate( 
+  category= if_else(thefts_data$description=="$500 AND UNDER"
+ |thefts_data$description=="POCKET_PICKING"| 
+  thefts_data$description=="PURSE_SNATCHING","petty","grand")
+ )
+
+```
+
+\pagebreak
+# Section 2
+
+```{r libraries2, warning=FALSE, echo=FALSE, message=FALSE}
+library(sf)
+```
+
+```{r Question2, warning=FALSE}
+#2.1
+
+thefts_data <- 
+  st_as_sf(thefts_data, coords = c("longitude","latitude"), crs=4326, remove = FALSE)
+
+
+#2.2
+
+thefts_fil <- thefts_data%>%
+  filter(month%in%c(month(now())-2,month(now())-1))
+
+```
+
+# Plot_Question 2
+
+```{r plot_question_2.2, warning=FALSE}
+
+library(ggplot2)
+
+thefts_fil1 <- thefts_fil%>%sample_frac(0.1)
+ggplot()+
+  geom_sf(
+    data=thefts_fil1,
+    aes(color=category))+
+  theme_void()+
+  ggtitle("Thefts in Chicago (Previous 2 months)")+
+  labs(
+    caption= "Source: City of Chicago Data Portal"
+  )+
+  scale_color_manual(values = c("grand"="red","petty"="blue"), name= "Theft Category")
+```
+\pagebreak
+
+```{r Question2.1, warning=FALSE, message=FALSE, include=TRUE, results='hide'}
+
+#2.3
+
+library(tidycensus)
+
+
+census_data <- load_variables(2016, "acs5")
+
+
+cook <- get_acs(
+  geography = "tract",
+  variables = "B01003_001",
+  state = "IL",
+  county = "Cook",
+  geometry = TRUE
+  )
+cook <- st_transform(cook, 4326)
+
+thefts_merged <- st_join(
+  thefts_data,cook,
+  join= st_within
+)
+
+#2.4
+
+thefts_merged$geometry <- NULL
+
+thefts_agg<- thefts_merged%>%
+  group_by(NAME,GEOID)%>%
+  mutate(count=n())%>%
+  summarise(average_thefts= mean(count))
+
+thefts_joined <-
+  cook%>%
+  left_join(thefts_agg, by="GEOID")%>%
+  drop_na()%>%
+  mutate(thefts_pc = (average_thefts/estimate))
+
+```
+# Plot_2
+```{r plot_question_2.4, warning=FALSE }
+library(sf)
+ggplot()+
+  geom_sf(
+    data=thefts_joined,
+    aes(fill= thefts_pc),color=NA
+  )+
+  theme_void()+
+  ggtitle("Thefts in Chicago (2016-2019)")+
+  labs(
+    caption= "Source: City of Chicago Data Portal"
+  )+
+  scale_fill_distiller(
+    palette= "Spectral",
+    name= "Avg Thefts Per Capita Per Year",
+   
+  )
+
+```
+
+# Questions on the plot
+•Why do you think thefts per capita is higher in the Loop and northwest side?
+
+Ans: The thefts per capita is higher in the loop because the thefts (mostly petty thefts) are higher in that area as we can see from plot 1.
+
+•What changes could we make to the map to further clarify the spatial distribution of thefts?
+
+Ans: We could use facet_wrap to add additional maps which also show the median_income, racial distribution and poverty levels in different parts of the state. So that we can have a more conclusive map as to why thefts in particular areas is higher.
+
+\pagebreak
+
+# Section 3
+```{r Question_3, warning=FALSE, message= FALSE, include=TRUE, results='asis'}
+
+library(tidycensus)
+ccok_reg_data <- get_acs(
+  geography = "tract",
+  county="Cook",
+  state = "IL", 
+  variables = c(total_population="B01003_001", white_pop = "B02001_002", 
+  med_income= "B06011_001", below_poverty_line="B17020_002", 
+  bachelor_degree_holders = "B06009_005", gender_male= "B01001_002"),
+  geometry=  TRUE)
+
+ccok_reg_data <- ccok_reg_data %>%
+  select(-moe)%>%
+  spread(variable, estimate)
+
+ccok_reg_data <- ccok_reg_data%>%
+  mutate(pct_white= white_pop/total_population)%>%
+  mutate(pct_degree_holder = bachelor_degree_holders/total_population)%>%
+  mutate(pct_below_poverty = below_poverty_line/total_population)%>%
+  mutate(pct_male= gender_male/total_population)
+
+ccok_reg_data<- st_transform(ccok_reg_data, 4326)
+
+ccok_reg_data1 <-
+  st_join(ccok_reg_data, thefts_joined, join= st_within)
+
+#Stargazer
+
+library(stargazer)
+fit<- lm(thefts_pc ~ med_income + pct_white + pct_degree_holder + pct_below_poverty + pct_male, data= ccok_reg_data1)
+stargazer(fit, type = "html")
+```
+# Questions
+
+3.1. Do you need to include weights in your regression? Fixed effects? Interaction terms? What should wedo with missing values? Does our regression specification make sense?
+
+Ans: Yes we need to include weights in regression as all these factors (like median_income, education, race etc.) affect variedly the thefts per capita. We also need to include the fixed effects because federal laws concerning punitive/preventive actions against theft could change over a period. We also need to add interaction terms as the regressors (like median income and pct_degree holders) are to a certain extent dependent on each other. We can control for missing values by using a Difference in Differnce estimator. 
+
+3.2. Do you think the coefficients here are reasonable? Which one most influences the number of thefts?
+
+Ans: The coefficients are not exactly reasonable as we have missing values. According to the regression model the most influential variable is pct_degree_holder. 
+
+3.3. Are there variables that you think should be included? Can this regression be interpreted as causal?
+
+Ans: The regression model cannot be interpreted as causal as there are omitted variables and the sample size is less. We could include other variables like reported thefts, criminal history 
+
+
